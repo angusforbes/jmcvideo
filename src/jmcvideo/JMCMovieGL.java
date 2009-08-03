@@ -5,7 +5,6 @@ package jmcvideo;
  *
  * @author angus
  */
-import com.sun.media.jmc.event.BufferDownloadedProgressChangedEvent;
 import com.sun.media.jmc.event.VideoRendererEvent;
 import com.sun.opengl.util.texture.Texture;
 import com.sun.opengl.util.texture.TextureCoords;
@@ -22,8 +21,6 @@ import processing.core.PApplet;
  */
 public class JMCMovieGL extends JMC
 {
-
-  private boolean DEBUG = false;
   public float alpha = 1f;
   public boolean isTextureWaiting = false;
   public TextureData textureData = null;
@@ -34,30 +31,31 @@ public class JMCMovieGL extends JMC
    * @param parent
    * @param url
    */
-  public JMCMovieGL(PApplet parent, URL url)
+  public JMCMovieGL(PApplet parent, URL url, int pixelFormat)
   {
-    initializeVideo(parent, VideoUtils.toURI(url));
+    initializeVideo(parent, VideoUtils.toURI(url), pixelFormat);
   }
 
   /**
    * Creates an instance of JMCMovieGL by loading a movie with the specified URI.
+   * 
    * @param parent
    * @param uri
+   * @param pixelForamt The PImage pixelFormat
    */
-  public JMCMovieGL(PApplet parent, URI uri)
+  public JMCMovieGL(PApplet parent, URI uri, int pixelFormat)
   {
-    initializeVideo(parent, uri);
+    initializeVideo(parent, uri, pixelFormat);
   }
-
   /**
    * Creates an instance of JMCVideoGL by loading a movie
    * from a specified file.
    * @param parent
    * @param file
    */
-  public JMCMovieGL(PApplet parent, File file)
+  public JMCMovieGL(PApplet parent, File file, int pixelFormat)
   {
-    initializeVideo(parent, VideoUtils.toURI(file));
+    initializeVideo(parent, VideoUtils.toURI(file), pixelFormat);
   }
 
   /**
@@ -65,39 +63,26 @@ public class JMCMovieGL extends JMC
    * @param parent A PApplet instance.
    * @param filename The name of the file.
    */
-  public JMCMovieGL(PApplet parent, String filename)
+  public JMCMovieGL(PApplet parent, String filename, int pixelFormat)
   {
-    initializeVideo(parent, VideoUtils.toURI(new File(parent.dataPath(filename))));
+    initializeVideo(parent, VideoUtils.toURI(new File(parent.dataPath(filename))), pixelFormat);
   }
 
-  /**
-   * JMC callback method when receiving new buffering information.
-   * Testing this for loading large and/or streaming files...
-   * @param bufferEvent
-   */
-  public void mediaDownloadProgressChanged(BufferDownloadedProgressChangedEvent bufferEvent)
-  {
-    /*
-    double progress = bufferEvent.getProgress();
-    double timestamp = bufferEvent.getTimestamp();
-    String description = bufferEvent.toString();
-
-    if (DEBUG)
-    {
-      System.out.println("download PROGRESS = " + progress + " TIMESTAMP: " + timestamp + " description " +
-        " = " + description + " source? " + bufferEvent.getSource());
-    }
-    */
-  }
 
   public void videoFrameUpdated(VideoRendererEvent rendererEvent)
   {
-    if (DEBUG)
+    if (!isPlaying() || !isReady())
     {
-      System.out.println("frame: " + rendererEvent.getFrameNumber());
+      return;
     }
 
-    handleLoopingBehavior();
+//    System.out.println("playbackPercentage = " + getPlaybackPercentage());
+//    System.out.println("now/duration = " + getCurrentTime() +"/"+ getDuration());
+
+    if (isBouncing == true)
+    {
+      handleBouncingBehavior();
+    }
 
     paintBufferedImage();
 
@@ -143,6 +128,11 @@ public class JMCMovieGL extends JMC
     return false;
   }
 
+  public void setAlpha(float alpha)
+  {
+    this.alpha = alpha;
+  }
+  
   /**
    * Draws the image across the entire bounds of the parent canvas.
    * @param gl

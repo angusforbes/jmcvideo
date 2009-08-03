@@ -1,11 +1,12 @@
 /* JMC.java ~ Mar 21, 2009 */
-
 package jmcvideo;
 
 import com.sun.media.jmc.MediaProvider;
 import com.sun.media.jmc.control.AudioControl;
+import com.sun.media.jmc.control.PlayControl;
 import com.sun.media.jmc.control.VideoRenderControl;
 import com.sun.media.jmc.event.BufferDownloadListener;
+import com.sun.media.jmc.event.BufferDownloadedProgressChangedEvent;
 import com.sun.media.jmc.event.VideoRendererListener;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
@@ -27,16 +28,23 @@ import processing.core.PImage;
  * to create your own renderer.
  * @author angus
  */
-public abstract class JMC extends PImage implements PConstants, VideoRendererListener, BufferDownloadListener
+public abstract class JMC extends PImage
+  implements PConstants, VideoRendererListener, BufferDownloadListener
 {
 
   public int vw = 0;
   public int vh = 0;
-
-  boolean play = true;
-  boolean repeat = false;
-  boolean bounce = false;
-
+  public double rate = 1f; //have to store rate because MediaProvider is not storing it properly
+  public boolean isBouncing = false;
+  public int numBounces = PlayControl.REPEAT_FOREVER;
+  public int bounces = 1;
+  public double bounceStart;
+  public double bounceStop;
+  public boolean forward = true;
+  public boolean stopVideoAfterBouncing = true;
+  public double progress = 0f;
+  public int imageType = BufferedImage.TYPE_INT_RGB;
+  public int pixelFormat = PImage.RGB;
   WritableRaster raster = null;
   AudioControl ac;
   VideoRenderControl vrc;
@@ -44,22 +52,32 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
   public BufferedImage bufferedImage = null;
   Graphics2D g2d = null;
   Dimension videoSize = null;
+  public float x, y, w, h;
 
-  public float x,  y,  w,  h;
-
-  public void initializeVideo(PApplet parent, URI uri)
+  public void initializeVideo(PApplet parent, URI uri, int pixelFormat)
   {
-    init(1,1,RGB);
+    //Processing stuff...
+    init(1, 1, pixelFormat);
+    this.pixelFormat = pixelFormat;
     this.parent = parent;
     parent.registerDispose(this);
 
-    this.mp = new MediaProvider(uri);
+    //JMC stuff...
+    this.mp = new MediaProvider();
+    setVideo(uri);
+
     ac = mp.getControl(AudioControl.class);
     vrc = mp.getControl(VideoRenderControl.class);
-    vrc.addVideoRendererListener(this);
 
-    //mp.addBufferDownloadListener(this);
-    //mp.setPlayCount(100);
+    vrc.addVideoRendererListener(this);
+    mp.addBufferDownloadListener(this);
+
+  }
+
+  public void mediaDownloadProgressChanged(BufferDownloadedProgressChangedEvent bde)
+  {
+    //System.out.println("dbe progess = " + bde.getProgress());
+    this.progress = bde.getProgress();
   }
 
   /**
@@ -68,8 +86,8 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void switchVideo(String filename)
   {
-    mp.setSource(VideoUtils.toURI(new File(parent.dataPath(filename))));
-    mp.play();
+    setVideo(VideoUtils.toURI(new File(parent.dataPath(filename))));
+    //mp.play();
   }
 
   /**
@@ -78,8 +96,8 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void switchVideo(File file)
   {
-    mp.setSource(VideoUtils.toURI(file));
-    mp.play();
+    setVideo(VideoUtils.toURI(file));
+    //mp.play();
   }
 
   /**
@@ -88,8 +106,8 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void switchVideo(URL url)
   {
-    mp.setSource(VideoUtils.toURI(url));
-    mp.play();
+    setVideo(VideoUtils.toURI(url));
+    //mp.play();
   }
 
   /**
@@ -98,32 +116,53 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void switchVideo(URI uri)
   {
-    mp.setSource(uri);
-    mp.play();
+    setVideo(uri);
+    //mp.play();
   }
 
-
-
   /**
-   * Handles what happens when the playback has reached the end (or the beginning
-   * if playing backwards). This is pretty wonky. Hopefully it will be cleaned up
-   * in the next version of JMC.
+   * Sets the imageType of the bufferedImage that the frame is painted on.
+   * @param imageType
    */
-  public void handleLoopingBehavior()
+  public void setImageType(int imageType)
   {
-    if (this.repeat == true && getRate() > 0 && getPlaybackPercentage() >= 1.0)
+    if (this.imageType != imageType)
     {
-      setPlaybackPercentage(Math.random() * .001);
+      this.imageType = imageType;
+      this.bufferedImage = null; //signals that the image needs to be recreated
     }
-    else if (this.bounce == true && getRate() > 0 && getPlaybackPercentage() >= 1.0)
+  }
+
+  public int getImageType()
+  {
+    return this.imageType;
+  }
+
+  public void handleBouncingBehavior()
+  {
+    if (this.isBouncing == true && forward == true && getCurrentTime() >= bounceStop)
     {
-      setRate(-1.0);
-      setPlaybackPercentage(1.0 - (Math.random() * .001));
+      rate *= -1;
+      setRate(rate);
+      forward = false;
+      bounces++;
     }
-    else if (this.bounce == true && getRate() < 0 && getPlaybackPercentage() <= 0.0)
+    else if (this.isBouncing == true && forward == false && getCurrentTime() <= bounceStart)
     {
-      setRate(1.0);
-      setPlaybackPercentage(Math.random() * .001);
+      rate *= -1;
+      setRate(rate);
+      forward = true;
+      bounces++;
+    }
+
+    if (numBounces != PlayControl.REPEAT_FOREVER && bounces > numBounces)
+    {
+      this.isBouncing = false;
+
+      if (stopVideoAfterBouncing == true)
+      {
+        stop();
+      }
     }
   }
 
@@ -143,22 +182,20 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
     g2d.dispose();
   }
 
-
-  //Creates a BufferedImage the same size as the Videoa and initializes the PImage pixel buffer.
+  /**
+   * Creates a BufferedImage the same size as the video and initializes the PImage pixel buffer.
+   */
   public void setupBufferedImage()
   {
     videoSize = vrc.getFrameSize();
-    bufferedImage = new BufferedImage((int) videoSize.getWidth(), (int) videoSize.getHeight(), BufferedImage.TYPE_INT_RGB);
-
-    //g2d = bufferedImage.createGraphics();
+    bufferedImage = new BufferedImage((int) videoSize.getWidth(), (int) videoSize.getHeight(), imageType);
 
     vw = (int) videoSize.getWidth();
     vh = (int) videoSize.getHeight();
 
-    super.init(vw, vh, RGB);
+    super.init(vw, vh, pixelFormat);
     loadPixels();
   }
-
 
   /**
    * Explicitly sets the bounds of this PImage.
@@ -174,7 +211,7 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
     this.w = w;
     this.h = h;
   }
-  
+
   /**
    * Sets the bounds
    * @param frameWidth
@@ -231,7 +268,7 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public String getTimeString()
   {
-    return VideoUtils.formatMediaTime(mp.getMediaTime());
+    return VideoUtils.formatMediaTime(getCurrentTime());
   }
 
   /**
@@ -240,7 +277,56 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public String getDurationString()
   {
-    return VideoUtils.formatMediaTime(mp.getDuration());
+    return VideoUtils.formatMediaTime(getDuration());
+  }
+
+  /**
+   * Gets a nicely formatted version of the download progress of the video.
+   * @return The progress of the video.
+   *
+   * @return
+   */
+  public String getProgressString()
+  {
+    return VideoUtils.formatMediaTime(getProgress());
+  }
+
+  /**
+   * Gets info about the loop settings.
+   * @return The loop settings.
+   */
+  public String getLoopString()
+  {
+    if (isBouncing == true)
+    {
+      return "bounce " + bounces + " of " + numBounces + ", " +
+        "bouncing between " + bounceStart + " and " + bounceStop;
+    }
+    else
+    {
+      return "loop " + currentLoop() + " of " + totalLoops() + ", " +
+        "looping between " + getStartTime() + " and " + getStopTime();
+    }
+  }
+
+  public double getStartTime()
+  {
+    return mp.getStartTime();
+  }
+
+  public void setStartTime(double start)
+  {
+    mp.setStartTime(start);
+  }
+
+  public double getStopTime()
+  {
+    return mp.getStopTime();
+  }
+
+  public void setStopTime(double stop)
+  {
+    mp.setStopTime(stop);
   }
 
   /**
@@ -249,7 +335,17 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public double getDuration()
   {
+    waitUntilReady();
     return this.mp.getDuration();
+  }
+
+  /**
+   * Gets the download progress of the video.
+   * @return The download progress of the video.
+   */
+  public double getProgress()
+  {
+    return progress;
   }
 
   /**
@@ -258,7 +354,9 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void changeRate(double amt)
   {
-    mp.setRate(mp.getRate() + amt);
+    this.rate = rate + amt;
+    waitUntilReady();
+    mp.setRate(rate);
   }
 
   /**
@@ -267,6 +365,8 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void setRate(double rate)
   {
+    this.rate = rate; //need to store the rate here because MediaProvider's getRate() is broken!
+    waitUntilReady();
     mp.setRate(rate);
   }
 
@@ -274,9 +374,10 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    * Gets the current rate of video playback.
    * @return The current rate.
    */
-  public double getRate()
+  public double getRate() //this doesn't seem to return the correct value! *always* 1.0
   {
-    return mp.getRate();
+    return this.rate;
+    //return mp.getRate(); //MediaProvider's getRate seems to be broken (in javafx1.2)
   }
 
   /**
@@ -292,9 +393,12 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void play()
   {
-    this.repeat = false;
-    this.bounce = false;
-    mp.play();
+    loop(1);
+  }
+
+  public void play(double start, double stop)
+  {
+    loop(1, start, stop);
   }
 
   /**
@@ -302,9 +406,41 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void loop()
   {
-    this.repeat = true;
-    this.bounce = false;
+    loop(PlayControl.REPEAT_FOREVER);
+  }
+
+  /**
+   * Begins video playback, looping a specified number of times.
+   * @param numRepeats
+   */
+  public void loop(int numRepeats)
+  {
+    waitUntilReady();
     mp.play();
+    mp.setPlayCount(numRepeats);
+  }
+
+  /**
+   * Begins video playback, looping forever from the specified start time to the specified end time.
+   * @param start
+   * @param stop
+   */
+  public void loop(double start, double stop)
+  {
+    loop(PlayControl.REPEAT_FOREVER, start, stop);
+  }
+
+  /**
+   * Begins video playback, looping a specified number of times from the specified start time to the specified end time.
+   * @param start
+   * @param stop
+   */
+  public void loop(int numRepeats, double start, double stop)
+  {
+    waitUntilReady();
+    setStartTime(start);
+    setStopTime(stop);
+    loop(numRepeats);
   }
 
   /**
@@ -312,13 +448,94 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void bounce()
   {
-    this.bounce = true;
-    this.repeat = false;
-    mp.play();
+    bounce(PlayControl.REPEAT_FOREVER);
   }
 
   /**
-   * Determine if the video is currently playing.
+   * Begins video playback, playing forwards and then backwards a specified number of times.
+   * @param numBounces
+   */
+  public void bounce(int numBounces)
+  {
+    this.isBouncing = true;
+    this.numBounces = numBounces;
+
+    waitUntilReady();
+    //mp.play();
+
+    this.bounceStart = .5;
+    setCurrentTime(bounceStart);
+    this.bounceStop = (getDuration() - .5);
+
+  }
+
+  /**
+   * Begins video playback, playing forwards and then backwards forever from the specified start time to the specified end time.
+   *
+   * @param bounceStart
+   * @param bounceStop
+   */
+  public void bounce(double bounceStart, double bounceStop)
+  {
+    bounce(PlayControl.REPEAT_FOREVER, bounceStart, bounceStop);
+  }
+
+  /**
+   * Begins video playback, playing forwards and then backwards 
+   * a specified number of times from the specified start time to the specified end time. 
+   * 
+   * @param numBounces
+   * @param bounceStart
+   * @param bounceStop
+   */
+  public void bounce(int numBounces, double bounceStart, double bounceStop)
+  {
+    this.isBouncing = true;
+    this.numBounces = numBounces;
+    this.bounceStart = bounceStart;
+    this.bounceStop = bounceStop;
+
+    waitUntilReady();
+
+    setCurrentTime(bounceStart);
+  }
+
+  /**
+   * Sleeps until the video is available.
+   */
+  private void waitUntilReady()
+  {
+    while (!isReady())
+    {
+      VideoUtils.sleep(10);
+    }
+  }
+
+  /**
+   * Checks to make sure that the video has a legitimate duration and that we are
+   * not trying to play past what has been downloaded.
+   * @return Whether or not the video is available for playing and querying.
+   */
+  public boolean isReady()
+  {
+    //    System.out.println("currentTime = " + getCurrentTime());
+    //    System.out.println("progress = " + progress);
+    if (mp.getDuration() == PlayControl.TIME_ETERNITY ||
+      mp.getDuration() == PlayControl.TIME_UNKNOWN)
+    {
+      return false;
+    }
+
+    if (progress < getCurrentTime())
+    {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Determine if the video is currently playing. This seems to be inaccurate sometimes!
    * @return A boolean indicating whether or not the video is currently playing.
    */
   public boolean isPlaying()
@@ -332,7 +549,7 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void changeVolume(float amt)
   {
-    this.ac.setVolume(this.ac.getVolume() + amt);
+    setVolume(getVolume() + amt);
   }
 
   /**
@@ -341,6 +558,7 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void setVolume(float vol)
   {
+    waitUntilReady();
     this.ac.setVolume(vol);
   }
 
@@ -350,15 +568,19 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public float getVolume()
   {
+    waitUntilReady();
     return this.ac.getVolume();
   }
 
   /**
-   * Mutes the video.
+   * Mutes or unmutes the video.
    */
-  public void mute()
+  public void setMute(boolean mute)
   {
-    this.ac.setMute(true);
+    if (isMuted() != mute)
+    {
+      this.ac.setMute(mute);
+    }
   }
 
   /**
@@ -367,15 +589,8 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public boolean isMuted()
   {
+    waitUntilReady();
     return this.ac.isMuted();
-  }
-
-  /**
-   * Unmutes the video.
-   */
-  public void unmute()
-  {
-    this.ac.setMute(false);
   }
 
   /**
@@ -383,7 +598,34 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void toggleMute()
   {
-    this.ac.setMute(!this.ac.isMuted());
+    setMute(!isMuted());
+  }
+
+  public void changeBalance(float amt)
+  {
+    setBalance(getBalance() + amt);
+  }
+
+  public void setBalance(float balance) //balance is automatically clamped between -1 and +1
+  {
+    this.ac.setBalance(balance);
+  }
+
+  public float getBalance()
+  {
+    return this.ac.getBalance();
+  }
+
+  //this doesn't seem to do anything...
+  public void setFader(float fader)
+  {
+    this.ac.setFader(fader);
+  }
+
+  //this returns the value set by setFader, but doesn't appear to do anything...
+  public float getFader()
+  {
+    return this.ac.getFader();
   }
 
   /**
@@ -401,7 +643,12 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void setCurrentTime(double time)
   {
-    this.mp.setMediaTime(time);
+    waitUntilReady();
+    if (time < progress - .01)
+    {
+      this.mp.play();
+      this.mp.setMediaTime(time);
+    }
   }
 
   /**
@@ -421,35 +668,7 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public void setPlaybackPercentage(double perc)
   {
-    //System.out.println("setting playback to ( " + this.mp.getDuration() + ") * (" + perc + " ... " + (this.mp.getDuration() * perc));
-    this.mp.setMediaTime(this.mp.getDuration() * perc);
-  }
-
-  /**
-   * Same as setRate().
-   * @param rate
-   */
-  public void speed(float rate) //Set a multiplier for how fast/slow the movie should be run.
-  {
-    setRate(rate);
-  }
-
-  /**
-   * Same as getDuration()
-   * @return the duration.
-   */
-  public float duration() //Get the full length of this movie (in seconds).
-  {
-    return (float) getDuration();
-  }
-
-  /**
-   * Jumps to a specified time within the video. Same as setCurrentTime().
-   * @param where
-   */
-  public void jump(float where) //Jump to a specific location (in seconds).
-  {
-    this.mp.setMediaTime(where); //check this, it is prob. NOT in seconds
+    setCurrentTime(getDuration() * perc);
   }
 
   /**
@@ -458,7 +677,11 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
    */
   public boolean isLooping()
   {
-    return mp.isRepeating();
+    if (totalLoops() > 1)
+    {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -479,23 +702,6 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
     return mp.getCurrentPlayCount();
   }
 
-
-  /**
-   * Temporary debugging-- Why is JMC not keeping track of loops properly???
-   * @return Some info.
-   */
-  public String getLoopString()
-  {
-    if (isLooping())
-    {
-      return "loop # " + currentLoop() + " of " + totalLoops();
-    }
-    else
-    {
-      return "not looping...";
-    }
-  }
-
   /**
    * Stops and rewinds the movie to the beginning.
    */
@@ -506,19 +712,33 @@ public abstract class JMC extends PImage implements PConstants, VideoRendererLis
   }
 
   /**
-   * Same as getCurrentTime().
-   * @return The current time.
-   */
-  public float time() //Return the current time in seconds.
-  {
-    return (float) getCurrentTime(); //prob NOT in seconds...
-  }
-
-  /**
-   * Dispose of native resources. (Need to figure this out...)
+   * Dispose of native resources.
    */
   public void dispose()
   {
-    stop();
+    pause();
+
+    VideoUtils.sleep(250L);
+
+    if (vrc != null)
+    {
+      vrc.removeVideoRendererListener(this);
+    }
+    if (mp != null)
+    {
+      mp.removeBufferDownloadListener(this);
+      this.progress = 0.0;
+      mp.setSource(null); //this will call mp.close()
+    }
+
+  }
+
+  /**
+   * Sets the video for this MediaProvider.
+   * @param uri The URI of the video.
+   */
+  public void setVideo(URI uri)
+  {
+    mp.setSource(uri);
   }
 }

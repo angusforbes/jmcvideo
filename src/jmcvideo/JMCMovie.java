@@ -5,20 +5,7 @@ package jmcvideo;
  *
  * @author angus
  */
-import java.lang.reflect.*;
-import com.sun.media.jmc.MediaProvider;
-import com.sun.media.jmc.control.AudioControl;
-import com.sun.media.jmc.control.VideoRenderControl;
-import com.sun.media.jmc.event.BufferDownloadedProgressChangedEvent;
 import com.sun.media.jmc.event.VideoRendererEvent;
-import com.sun.media.jmc.event.VideoRendererListener;
-import com.sun.opengl.util.texture.Texture;
-import com.sun.opengl.util.texture.TextureData;
-import java.awt.Dimension;
-import java.awt.Graphics2D;
-import java.awt.Rectangle;
-import java.awt.image.BufferedImage;
-import java.awt.image.WritableRaster;
 import java.io.File;
 import java.net.URI;
 import java.net.URL;
@@ -29,16 +16,14 @@ import processing.core.*;
  */
 public class JMCMovie extends JMC //implements PConstants, VideoRendererListener//,
 {
-  private boolean DEBUG = false; //true;
-
   /**
    * Creates an instance of JMCMovie by loading a movie with the specified URL.
    * @param parent
    * @param url
    */
-  public JMCMovie(PApplet parent, URL url)
+  public JMCMovie(PApplet parent, URL url, int pixelFormat)
   {
-    initializeVideo(parent, VideoUtils.toURI(url));
+    initializeVideo(parent, VideoUtils.toURI(url), pixelFormat);
   }
 
   /**
@@ -46,9 +31,9 @@ public class JMCMovie extends JMC //implements PConstants, VideoRendererListener
    * @param parent
    * @param uri
    */
-  public JMCMovie(PApplet parent, URI uri)
+  public JMCMovie(PApplet parent, URI uri, int pixelFormat)
   {
-    initializeVideo(parent, uri);
+    initializeVideo(parent, uri, pixelFormat);
   }
 
   /**
@@ -57,9 +42,9 @@ public class JMCMovie extends JMC //implements PConstants, VideoRendererListener
    * @param parent
    * @param file
    */
-  public JMCMovie(PApplet parent, File file)
+  public JMCMovie(PApplet parent, File file, int pixelFormat)
   {
-    initializeVideo(parent, VideoUtils.toURI(file));
+    initializeVideo(parent, VideoUtils.toURI(file), pixelFormat);
   }
 
   /**
@@ -68,31 +53,11 @@ public class JMCMovie extends JMC //implements PConstants, VideoRendererListener
    * @param parent A PApplet instance.
    * @param filename The name of the file.
    */
-  public JMCMovie(PApplet parent, String filename)
+  public JMCMovie(PApplet parent, String filename, int pixelFormat)
   {
-    initializeVideo(parent, VideoUtils.toURI(new File(parent.dataPath(filename))));
+    initializeVideo(parent, VideoUtils.toURI(new File(parent.dataPath(filename))), pixelFormat);
   }
   
-
-  /**
-   * JMC callback method when receiving new buffering information.
-   * Testing this for loading large and/or streaming files...
-   * @param bufferEvent
-   */
-  public void mediaDownloadProgressChanged(BufferDownloadedProgressChangedEvent bufferEvent)
-  {
-    /*
-    double progress = bufferEvent.getProgress();
-    double timestamp = bufferEvent.getTimestamp();
-    String description = bufferEvent.toString();
-
-    if (DEBUG)
-    {
-      System.out.println("download PROGRESS = " + progress + " TIMESTAMP: " + timestamp + " description " +
-        " = " + description + " source? " + bufferEvent.getSource());
-    }
-    */
-  }
 
   /**
    * JMC callback method when receiving a new video frame. If the parent does not contain
@@ -102,12 +67,19 @@ public class JMCMovie extends JMC //implements PConstants, VideoRendererListener
    */
   public void videoFrameUpdated(VideoRendererEvent rendererEvent)
   {
-    if (DEBUG)
+    if (!isPlaying() || !isReady())
     {
-      System.out.println("frame: " + rendererEvent.getFrameNumber());
+      return;
     }
 
-    handleLoopingBehavior();
+//    System.out.println("playbackPercentage = " + getPlaybackPercentage());
+//    System.out.println("now/duration = " + getCurrentTime() +"/"+ getDuration());
+
+    if (isBouncing == true)
+    {
+      handleBouncingBehavior();
+    }
+
     paintBufferedImage();
     read();
   }
@@ -136,7 +108,7 @@ public class JMCMovie extends JMC //implements PConstants, VideoRendererListener
 
 
   /**
-   * Draws the image within the specified location of the parent canvas.
+   * Draws the image at the specified location within the previously set bounds of the parent canvas.
    */
   public void image(float xloc, float yloc)
   {
@@ -145,7 +117,7 @@ public class JMCMovie extends JMC //implements PConstants, VideoRendererListener
   }
 
   /**
-   * Draws the image within the specified bounds of the parent canvas.
+   * Draws the image at the specified location within the specified bounds of the parent canvas.
    */
   public void image(float x, float y, float w, float h)
   {

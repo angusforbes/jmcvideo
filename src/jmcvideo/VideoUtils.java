@@ -55,4 +55,22 @@ public class VideoUtils
 
     return format(minutes, 2) + ":" + format(seconds, 2) + "." + format(milli, 3);
   }
+
+  public static void sleep(long ms)
+  {
+    if (ms < 0L)
+    {
+      ms = 0L;
+    }
+
+    try
+    {
+      Thread.sleep(ms);
+    }
+    catch (Exception e)
+    {
+      e.printStackTrace();
+    }
+  }
+
 }
